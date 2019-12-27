@@ -50,16 +50,16 @@ extension SQSSwiftRuntime {
     
     public typealias SyncEventHandler<E : Decodable> = (E) throws -> Void
     public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping SyncEventHandler<Event>) throws {
-        try handleEvent(request: request) { event -> EventLoopFuture<Void> in
-            return AWSClient.eventGroup.next().submit({ try handler(event) })
+        try handleEvent(request: request) { [unowned self] event -> EventLoopFuture<Void> in
+            return self.sqsClient.client.eventLoopGroup.next().submit({ try handler(event) })
         }
     }
     
     public typealias AsyncEventHandler<E : Decodable> = (E, (() -> Void)) throws -> Void
     public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncEventHandler<Event>) throws {
-        try handleEvent(request: request) { (event : Event) -> EventLoopFuture<Void> in
+        try handleEvent(request: request) { [unowned self] (event : Event) -> EventLoopFuture<Void> in
             
-            let promise = AWSClient.eventGroup.next().makePromise(of: Void.self)
+            let promise = self.sqsClient.client.eventLoopGroup.next().makePromise(of: Void.self)
             do {
                 try handler(event, { promise.succeed(()) })
             } catch {
@@ -89,7 +89,7 @@ extension SQSSwiftRuntime {
                 /// Verify that we have messages
                 /// Decoded the message bodies
                 /// Call the handlers passing in the message bodies
-                _ = try AWSClient.eventGroup.next().scheduleTask(in: backOffTimeAmount) {
+                _ = try sqsClient.client.eventLoopGroup.next().scheduleTask(in: backOffTimeAmount) {
                     return try self.sqsClient.receiveMessage(request)
                         .unwrapMessages()
                         .map({ messages -> [SQS.Message] in
@@ -136,14 +136,14 @@ extension SQSSwiftRuntime {
     }
     
     public func handleEventsInQueue<Event : Decodable>(_ queue: String, handler: @escaping SyncEventHandler<Event>) throws {
-        try handleEventsInQueue(queue) { event -> EventLoopFuture<Void> in
-            return AWSClient.eventGroup.next().submit({ try handler(event) })
+        try handleEventsInQueue(queue) { [unowned self] event -> EventLoopFuture<Void> in
+            return self.sqsClient.client.eventLoopGroup.next().submit({ try handler(event) })
         }
     }
     
     public func handleEventsInQueue<Event : Decodable>(_ queue: String, handler: @escaping AsyncEventHandler<Event>) throws {
-        try handleEventsInQueue(queue) { (event : Event) -> EventLoopFuture<Void> in
-            let promise = AWSClient.eventGroup.next().makePromise(of: Void.self)
+        try handleEventsInQueue(queue) { [unowned self] (event : Event) -> EventLoopFuture<Void> in
+            let promise = self.sqsClient.client.eventLoopGroup.next().makePromise(of: Void.self)
             do {
                 try handler(event, { promise.succeed(()) })
             } catch {
