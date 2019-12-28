@@ -14,18 +14,18 @@ import Dispatch
 extension SQSSwiftRuntime {
     
     public typealias SyncEventHandler<E : Decodable> = (E) throws -> Void
-    public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping SyncEventHandler<Event>) throws {
-        try handleMessage(request: request, handler: { try handler(try $0.decodeBody(as: Event.self)) })
+    public func handleEvents<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping SyncEventHandler<Event>) throws {
+        try handleMessages(request: request, handler: { try handler(try $0.decodeBody(as: Event.self)) })
     }
     
     public typealias AsyncEventHandler<E : Decodable> = (E, (() -> Void)) throws -> Void
-    public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncEventHandler<Event>) throws {
-        try handleMessage(request: request, handler: { try handler(try $0.decodeBody(as: Event.self), $1) })
+    public func handleEvents<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncEventHandler<Event>) throws {
+        try handleMessages(request: request, handler: { try handler(try $0.decodeBody(as: Event.self), $1) })
     }
     
     public typealias NIOEventHandler<E : Decodable> = (E) throws -> EventLoopFuture<Void>
-    public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping NIOEventHandler<Event>) throws {
-        try handleMessage(request: request) { try handler(try $0.decodeBody(as: Event.self)) }
+    public func handleEvents<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping NIOEventHandler<Event>) throws {
+        try handleMessages(request: request) { try handler(try $0.decodeBody(as: Event.self)) }
     }
     
 }

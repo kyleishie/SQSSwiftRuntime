@@ -52,15 +52,15 @@ extension SQSSwiftRuntime {
     }
     
     public typealias SyncMessageHandler = (SQS.Message) throws -> Void
-    public func handleMessage(request: SQS.ReceiveMessageRequest, handler: @escaping SyncMessageHandler) throws {
-        try handleMessage(request: request) { [unowned self] message -> EventLoopFuture<Void> in
+    public func handleMessages(request: SQS.ReceiveMessageRequest, handler: @escaping SyncMessageHandler) throws {
+        try handleMessages(request: request) { [unowned self] message -> EventLoopFuture<Void> in
             return self.sqsClient.client.eventLoopGroup.next().submit({ try handler(message) })
         }
     }
     
     public typealias AsyncMessageHandler = (SQS.Message, (() -> Void)) throws -> Void
-    public func handleMessage(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncMessageHandler) throws {
-        try handleMessage(request: request) { [unowned self] (message : SQS.Message) -> EventLoopFuture<Void> in
+    public func handleMessages(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncMessageHandler) throws {
+        try handleMessages(request: request) { [unowned self] (message : SQS.Message) -> EventLoopFuture<Void> in
             
             let promise = self.sqsClient.client.eventLoopGroup.next().makePromise(of: Void.self)
             do {
@@ -73,7 +73,7 @@ extension SQSSwiftRuntime {
     }
     
     public typealias NIOMessageHandler = (SQS.Message) throws -> EventLoopFuture<Void>
-    public func handleMessage(request: SQS.ReceiveMessageRequest, handler: @escaping NIOMessageHandler) throws {
+    public func handleMessages(request: SQS.ReceiveMessageRequest, handler: @escaping NIOMessageHandler) throws {
         
         lockState()
         _state = .receiving
@@ -158,7 +158,7 @@ extension SQSSwiftRuntime {
         
         let request = SQS.ReceiveMessageRequest(maxNumberOfMessages: 10, queueUrl: queueUrl, visibilityTimeout: 10, waitTimeSeconds: 20)
         
-        try handleEvent(request: request, handler: handler)
+        try handleMessages(request: request, handler: handler)
         
     }
     
