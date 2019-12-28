@@ -45,6 +45,84 @@ public final class SQSSwiftRuntime {
     
 }
 
+extension SQSSwiftRuntime {
+    
+    
+    public typealias SyncMessageHandler = (SQS.Message) throws -> Void
+    public func handleMessage(request: SQS.ReceiveMessageRequest, handler: @escaping SyncMessageHandler) throws {
+        try handleMessage(request: request) { [unowned self] message -> EventLoopFuture<Void> in
+            return self.sqsClient.client.eventLoopGroup.next().submit({ try handler(message) })
+        }
+    }
+    
+    public typealias AsyncMessageHandler = (SQS.Message, (() -> Void)) throws -> Void
+    public func handleEvent(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncMessageHandler) throws {
+        try handleMessage(request: request) { [unowned self] (message : SQS.Message) -> EventLoopFuture<Void> in
+            
+            let promise = self.sqsClient.client.eventLoopGroup.next().makePromise(of: Void.self)
+            do {
+                try handler(message, { promise.succeed(()) })
+            } catch {
+                promise.fail(error)
+            }
+            return promise.futureResult
+        }
+    }
+    
+    public typealias NIOMessageHandler = (SQS.Message) throws -> EventLoopFuture<Void>
+    public func handleMessage(request: SQS.ReceiveMessageRequest, handler: @escaping NIOMessageHandler) throws {
+        
+        lockState()
+        _state = .receiving
+        unlockState()
+        
+        var backOffTimeAmount : TimeAmount = .milliseconds(0)
+        
+        repeat {
+            
+            do {
+                /// Receive Messages from SQS
+                /// Verify that we have messages
+                /// Decoded the message bodies
+                /// Call the handlers passing in the message bodies
+                _ = try sqsClient.client.eventLoopGroup.next().scheduleTask(in: backOffTimeAmount) {
+                    return try self.sqsClient.receiveMessage(request)
+                        .unwrapMessages()
+                        .map({ messages -> [SQS.Message] in
+                            backOffTimeAmount = .milliseconds(0)
+                            return messages
+                        })
+                        .map { message -> EventLoopFuture<Void> in
+                            return try handler(message).flatMap {
+                                let deleteRequest = SQS.DeleteMessageRequest(queueUrl: request.queueUrl, receiptHandle: message.receiptHandle!)
+                                self.sqsClient.deleteMessage(deleteRequest)
+                            }
+                    }
+                    .whenAllComplete()
+                    
+                }.futureResult
+                    .wait().wait()
+                
+            } catch ReceiverError.noNewMessages {
+                
+                switch backOffTimeAmount {
+                case .milliseconds(0):
+                    backOffTimeAmount = .milliseconds(200)
+                case .milliseconds(200):
+                    backOffTimeAmount = .milliseconds(400)
+                default:
+                    backOffTimeAmount = .milliseconds(400)
+                }
+                
+            } catch {
+                print(error)
+            }
+            
+        } while _state < .shuttingdown
+        
+    }
+}
+
 
 extension SQSSwiftRuntime {
     
@@ -74,56 +152,12 @@ extension SQSSwiftRuntime {
     }
     
     public typealias NIOEventHandler<E : Decodable> = (E) throws -> EventLoopFuture<Void>
+    
     public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping NIOEventHandler<Event>) throws {
+        try handleMessage(request: request) { message -> EventLoopFuture<Void> in
+            return try handler(try message.decodeBody(as: Event.self))
+        }
         
-        lockState()
-        _state = .receiving
-        unlockState()
-        
-        var backOffTimeAmount : TimeAmount = .milliseconds(0)
-        
-        repeat {
-            
-            do {
-                /// Receive Messages from SQS
-                /// Verify that we have messages
-                /// Decoded the message bodies
-                /// Call the handlers passing in the message bodies
-                _ = try sqsClient.client.eventLoopGroup.next().scheduleTask(in: backOffTimeAmount) {
-                    return try self.sqsClient.receiveMessage(request)
-                        .unwrapMessages()
-                        .map({ messages -> [SQS.Message] in
-                            backOffTimeAmount = .milliseconds(0)
-                            return messages
-                        })
-                        .decodeMessages(to: Event.self)
-                        .map { (message, event) -> EventLoopFuture<Void> in
-                            return try handler(event).flatMapThrowing({
-                                let deleteRequest = SQS.DeleteMessageRequest(queueUrl: request.queueUrl, receiptHandle: message.receiptHandle!)
-                                try self.sqsClient.deleteMessage(deleteRequest)
-                            })
-                        }
-                        .whenAllComplete()
-                    
-                }.futureResult
-                .wait().wait()
-                
-            } catch ReceiverError.noNewMessages {
-                
-                switch backOffTimeAmount {
-                case .milliseconds(0):
-                    backOffTimeAmount = .milliseconds(200)
-                case .milliseconds(200):
-                    backOffTimeAmount = .milliseconds(400)
-                default:
-                    backOffTimeAmount = .milliseconds(400)
-                }
-                
-            } catch {
-                print(error)
-            }
-
-        } while _state < .shuttingdown
         
     }
     
