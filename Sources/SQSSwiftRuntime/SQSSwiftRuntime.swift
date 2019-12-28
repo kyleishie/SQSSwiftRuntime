@@ -6,7 +6,7 @@ import Dispatch
 
 public final class SQSSwiftRuntime {
     
-    private let sqsClient : SQS
+    let sqsClient : SQS
     
     public init(accessKeyId: String? = nil, secretAccessKey: String? = nil, region: AWSSDKSwiftCore.Region? = nil, endpoint: String? = nil) {
         self.sqsClient = SQS(accessKeyId: accessKeyId, secretAccessKey: secretAccessKey, region: region, endpoint: endpoint)
@@ -47,6 +47,9 @@ public final class SQSSwiftRuntime {
 
 extension SQSSwiftRuntime {
     
+    internal enum ReceiverError : Swift.Error {
+        case noNewMessages
+    }
     
     public typealias SyncMessageHandler = (SQS.Message) throws -> Void
     public func handleMessage(request: SQS.ReceiveMessageRequest, handler: @escaping SyncMessageHandler) throws {
@@ -56,7 +59,7 @@ extension SQSSwiftRuntime {
     }
     
     public typealias AsyncMessageHandler = (SQS.Message, (() -> Void)) throws -> Void
-    public func handleEvent(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncMessageHandler) throws {
+    public func handleMessage(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncMessageHandler) throws {
         try handleMessage(request: request) { [unowned self] (message : SQS.Message) -> EventLoopFuture<Void> in
             
             let promise = self.sqsClient.client.eventLoopGroup.next().makePromise(of: Void.self)
@@ -123,63 +126,23 @@ extension SQSSwiftRuntime {
     }
 }
 
-
-extension SQSSwiftRuntime {
-    
-    public typealias SyncEventHandler<E : Decodable> = (E) throws -> Void
-    public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping SyncEventHandler<Event>) throws {
-        try handleEvent(request: request) { [unowned self] event -> EventLoopFuture<Void> in
-            return self.sqsClient.client.eventLoopGroup.next().submit({ try handler(event) })
-        }
-    }
-    
-    public typealias AsyncEventHandler<E : Decodable> = (E, (() -> Void)) throws -> Void
-    public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping AsyncEventHandler<Event>) throws {
-        try handleEvent(request: request) { [unowned self] (event : Event) -> EventLoopFuture<Void> in
-            
-            let promise = self.sqsClient.client.eventLoopGroup.next().makePromise(of: Void.self)
-            do {
-                try handler(event, { promise.succeed(()) })
-            } catch {
-                promise.fail(error)
-            }
-            return promise.futureResult
-        }
-    }
-    
-    internal enum ReceiverError : Swift.Error {
-        case noNewMessages
-    }
-    
-    public typealias NIOEventHandler<E : Decodable> = (E) throws -> EventLoopFuture<Void>
-    
-    public func handleEvent<Event : Decodable>(request: SQS.ReceiveMessageRequest, handler: @escaping NIOEventHandler<Event>) throws {
-        try handleMessage(request: request) { message -> EventLoopFuture<Void> in
-            return try handler(try message.decodeBody(as: Event.self))
-        }
-        
-        
-    }
-    
-}
-
 extension SQSSwiftRuntime {
     
     public enum QueueError : Swift.Error {
         case queueNotFound
     }
     
-    public func handleEventsInQueue<Event : Decodable>(_ queue: String, handler: @escaping SyncEventHandler<Event>) throws {
-        try handleEventsInQueue(queue) { [unowned self] event -> EventLoopFuture<Void> in
-            return self.sqsClient.client.eventLoopGroup.next().submit({ try handler(event) })
+    public func handleMessagesInQueue(_ queue: String, handler: @escaping SyncMessageHandler) throws {
+        try handleMessagesInQueue(queue) { [unowned self] message -> EventLoopFuture<Void> in
+            return self.sqsClient.client.eventLoopGroup.next().submit({ try handler(message) })
         }
     }
     
-    public func handleEventsInQueue<Event : Decodable>(_ queue: String, handler: @escaping AsyncEventHandler<Event>) throws {
-        try handleEventsInQueue(queue) { [unowned self] (event : Event) -> EventLoopFuture<Void> in
+    public func handleMessagesInQueue(_ queue: String, handler: @escaping AsyncMessageHandler) throws {
+        try handleMessagesInQueue(queue) { [unowned self] (message : SQS.Message) -> EventLoopFuture<Void> in
             let promise = self.sqsClient.client.eventLoopGroup.next().makePromise(of: Void.self)
             do {
-                try handler(event, { promise.succeed(()) })
+                try handler(message, { promise.succeed(()) })
             } catch {
                 promise.fail(error)
             }
@@ -187,7 +150,7 @@ extension SQSSwiftRuntime {
         }
     }
     
-    public func handleEventsInQueue<Event : Decodable>(_ queue: String, handler: @escaping NIOEventHandler<Event>) throws {
+    public func handleMessagesInQueue(_ queue: String, handler: @escaping NIOMessageHandler) throws {
         let response = try sqsClient.getQueueUrl(SQS.GetQueueUrlRequest(queueName: queue, queueOwnerAWSAccountId: nil)).wait()
         guard let queueUrl = response.queueUrl else {
             throw QueueError.queueNotFound
@@ -200,4 +163,5 @@ extension SQSSwiftRuntime {
     }
     
 }
+
 
