@@ -93,7 +93,7 @@ extension SQSSwiftRuntime {
                             return messages
                         })
                         .map { message -> EventLoopFuture<Void> in
-                            return try handler(message).flatMap {
+                            return try handler(message).map {
                                 let deleteRequest = SQS.DeleteMessageRequest(queueUrl: request.queueUrl, receiptHandle: message.receiptHandle!)
                                 self.sqsClient.deleteMessage(deleteRequest)
                             }
